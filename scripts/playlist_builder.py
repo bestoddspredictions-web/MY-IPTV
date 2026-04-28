@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-Script 1 — Playlist Builder v1.3
+Script 1 — Playlist Builder v1.4
 Fetches channels + streams from iptv-org API.
-Includes all streams (status field removed from API).
 Outputs: output/merged_channels.m3u
 Run: Weekly via GitHub Actions
 """
@@ -76,12 +75,6 @@ def build_m3u(channels: dict, streams: list) -> tuple:
 
         for stream in streams:
 
-            # Skip blocked channels
-            # Note: status field was removed from iptv-org API — include all streams
-            if stream.get("is_blocked") == True:
-                skipped += 1
-                continue
-
             # Safely extract — some fields can be null in API
             channel_id = safe_str(stream.get("channel"))
             url        = safe_str(stream.get("url"))
@@ -115,12 +108,12 @@ def build_m3u(channels: dict, streams: list) -> tuple:
 
             f.write(extinf)
 
-            # Write referrer/user-agent if required by stream
-            http_referrer = safe_str(stream.get("http_referrer"))
-            user_agent    = safe_str(stream.get("user_agent"))
+            # NOTE: API renamed http_referrer → referrer in latest version
+            referrer   = safe_str(stream.get("referrer") or stream.get("http_referrer"))
+            user_agent = safe_str(stream.get("user_agent"))
 
-            if http_referrer:
-                f.write(f'#EXTVLCOPT:http-referrer={http_referrer}\n')
+            if referrer:
+                f.write(f'#EXTVLCOPT:http-referrer={referrer}\n')
             if user_agent:
                 f.write(f'#EXTVLCOPT:http-user-agent={user_agent}\n')
 
@@ -135,7 +128,7 @@ def build_m3u(channels: dict, streams: list) -> tuple:
 
 def main():
     print("\n╔══════════════════════════════════╗")
-    print("║      Playlist Builder v1.3       ║")
+    print("║      Playlist Builder v1.4       ║")
     print("╚══════════════════════════════════╝\n")
 
     # Step 1 — Fetch channels
