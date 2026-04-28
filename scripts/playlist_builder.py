@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Script 1 — Playlist Builder v1.2
+Script 1 — Playlist Builder v1.3
 Fetches channels + streams from iptv-org API.
 Includes all streams (status field removed from API).
 Outputs: output/merged_channels.m3u
@@ -50,6 +50,16 @@ def fetch_json(endpoint: str) -> list:
         return []
 
 # ─────────────────────────────────────────────
+# SAFE STRING HELPER
+# ─────────────────────────────────────────────
+
+def safe_str(value, fallback="") -> str:
+    """Safely convert any value to string — handles None, int, etc."""
+    if value is None:
+        return fallback
+    return str(value).strip()
+
+# ─────────────────────────────────────────────
 # BUILD M3U
 # ─────────────────────────────────────────────
 
@@ -66,27 +76,29 @@ def build_m3u(channels: dict, streams: list) -> tuple:
 
         for stream in streams:
 
-            # Skip blocked channels only
+            # Skip blocked channels
             # Note: status field was removed from iptv-org API — include all streams
             if stream.get("is_blocked") == True:
                 skipped += 1
                 continue
 
-            channel_id = stream.get("channel", "").strip()
-            url        = stream.get("url", "").strip()
+            # Safely extract — some fields can be null in API
+            channel_id = safe_str(stream.get("channel"))
+            url        = safe_str(stream.get("url"))
 
+            # Skip if missing channel ID or URL
             if not channel_id or not url:
                 skipped += 1
                 continue
 
             # Get channel metadata
             ch       = channels.get(channel_id, {})
-            name     = ch.get("name", channel_id).strip()
-            logo     = ch.get("logo", "").strip()
-            country  = ch.get("country", "").strip()
-            langs    = ch.get("languages", [])
+            name     = safe_str(ch.get("name"), channel_id)
+            logo     = safe_str(ch.get("logo"))
+            country  = safe_str(ch.get("country"))
+            langs    = ch.get("languages") or []
             language = ",".join(langs) if langs else ""
-            cats     = ch.get("categories", [])
+            cats     = ch.get("categories") or []
             group    = cats[0] if cats else "Uncategorised"
 
             # Build EXTINF line
@@ -104,8 +116,8 @@ def build_m3u(channels: dict, streams: list) -> tuple:
             f.write(extinf)
 
             # Write referrer/user-agent if required by stream
-            http_referrer = stream.get("http_referrer", "").strip()
-            user_agent    = stream.get("user_agent", "").strip()
+            http_referrer = safe_str(stream.get("http_referrer"))
+            user_agent    = safe_str(stream.get("user_agent"))
 
             if http_referrer:
                 f.write(f'#EXTVLCOPT:http-referrer={http_referrer}\n')
@@ -123,7 +135,7 @@ def build_m3u(channels: dict, streams: list) -> tuple:
 
 def main():
     print("\n╔══════════════════════════════════╗")
-    print("║      Playlist Builder v1.2       ║")
+    print("║      Playlist Builder v1.3       ║")
     print("╚══════════════════════════════════╝\n")
 
     # Step 1 — Fetch channels
