@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Script 1 — Playlist Builder
+Script 1 — Playlist Builder v1.2
 Fetches channels + streams from iptv-org API.
-Filters online streams only.
+Includes all streams (status field removed from API).
 Outputs: output/merged_channels.m3u
 Run: Weekly via GitHub Actions
 """
@@ -66,8 +66,9 @@ def build_m3u(channels: dict, streams: list) -> tuple:
 
         for stream in streams:
 
-            # Only include online streams
-            if stream.get("status") != "online":
+            # Skip blocked channels only
+            # Note: status field was removed from iptv-org API — include all streams
+            if stream.get("is_blocked") == True:
                 skipped += 1
                 continue
 
@@ -122,7 +123,7 @@ def build_m3u(channels: dict, streams: list) -> tuple:
 
 def main():
     print("\n╔══════════════════════════════════╗")
-    print("║      Playlist Builder v1.1       ║")
+    print("║      Playlist Builder v1.2       ║")
     print("╚══════════════════════════════════╝\n")
 
     # Step 1 — Fetch channels
@@ -140,13 +141,11 @@ def main():
     if not streams:
         print("  [!] No streams loaded — aborting.")
         sys.exit(1)
-    total  = len(streams)
-    online = sum(1 for s in streams if s.get("status") == "online")
-    print(f"  [✓] Total streams:  {total}")
-    print(f"  [✓] Online streams: {online}\n")
+    total = len(streams)
+    print(f"  [✓] Total streams: {total}\n")
 
-    if online == 0:
-        print("  [!] No online streams found — aborting.")
+    if total == 0:
+        print("  [!] No streams found — aborting.")
         sys.exit(1)
 
     # Step 3 — Build M3U
