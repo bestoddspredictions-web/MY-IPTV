@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Script 2 — EPG Builder
-Fetches guides from iptv-org API.
-Downloads EPG XML per channel.
-Merges into one clean merged_epg.xml
+Script 2 — EPG Builder v1.2
+guides.json has NO url field — it maps channels to EPG sites.
+We use it to build per-site XMLTV URLs and fetch them directly.
+Outputs: output/merged_epg.xml
 Run: Daily via GitHub Actions
 """
 
@@ -24,8 +24,36 @@ OUTPUT_DIR  = "output"
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, "merged_epg.xml")
 HEADERS     = {"User-Agent": "Mozilla/5.0"}
 
-# Max EPG sources to fetch (keeps run time reasonable on GitHub Actions)
-MAX_SOURCES = 50
+# Max EPG sites to fetch (each site has its own XML file)
+MAX_SITES = 50
+
+# Known EPG XML URL patterns for popular sites
+# Format: site domain → URL template (use {lang} if needed)
+KNOWN_EPG_SITES = {
+    "tvtv.us":           "https://iptv-org.github.io/epg/guides/us/tvtv.us.epg.xml",
+    "sky.co.uk":         "https://iptv-org.github.io/epg/guides/gb/sky.co.uk.epg.xml",
+    "tvguide.com":       "https://iptv-org.github.io/epg/guides/us/tvguide.com.epg.xml",
+    "tv.apple.com":      "https://iptv-org.github.io/epg/guides/us/tv.apple.com.epg.xml",
+    "bbc.co.uk":         "https://iptv-org.github.io/epg/guides/gb/bbc.co.uk.epg.xml",
+    "rcti.id":           "https://iptv-org.github.io/epg/guides/id/rcti.id.epg.xml",
+    "ontvtonight.com":   "https://iptv-org.github.io/epg/guides/us/ontvtonight.com.epg.xml",
+}
+
+# Fallback EPG sources (these are standalone XMLTV files)
+FALLBACK_EPG_URLS = [
+    "https://iptv-org.github.io/epg/guides/us/tvtv.us.epg.xml",
+    "https://iptv-org.github.io/epg/guides/gb/sky.co.uk.epg.xml",
+    "https://iptv-org.github.io/epg/guides/us/tvguide.com.epg.xml",
+    "https://iptv-org.github.io/epg/guides/gb/bbc.co.uk.epg.xml",
+    "https://iptv-org.github.io/epg/guides/de/tvspielfilm.de.epg.xml",
+    "https://iptv-org.github.io/epg/guides/fr/programme-tv.net.epg.xml",
+    "https://iptv-org.github.io/epg/guides/es/movistar.es.epg.xml",
+    "https://iptv-org.github.io/epg/guides/au/foxtel.com.au.epg.xml",
+    "https://iptv-org.github.io/epg/guides/us/ontvtonight.com.epg.xml",
+    "https://iptv-org.github.io/epg/guides/ae/osn.com.epg.xml",
+    "https://iptv-org.github.io/epg/guides/sa/shahid.net.epg.xml",
+    "https://iptv-org.github.io/epg/guides/eg/shahid.net.epg.xml",
+]
 
 # ─────────────────────────────────────────────
 # FETCH JSON
@@ -53,6 +81,55 @@ def fetch_json(endpoint: str) -> list:
         return []
 
 # ─────────────────────────────────────────────
+# BUILD EPG URL LIST FROM GUIDES.JSON
+# ─────────────────────────────────────────────
+
+def build_epg_urls(guides: list) -> list:
+    """
+    guides.json = list of { channel, site, site_id, lang }
+    Build XMLTV URLs from the site names using iptv-org EPG pattern.
+    Pattern: https://iptv-org.github.io/epg/guides/{country}/{site}.epg.xml
+    """
+    seen   = set()
+    urls   = []
+
+    # First add known sites
+    for site, url in KNOWN_EPG_SITES.items():
+        if url not in seen:
+            seen.add(url)
+            urls.append(url)
+
+    # Then build URLs from guides.json site names
+    for guide in guides:
+        site = guide.get("site", "").strip()
+        lang = guide.get("lang", "en").strip()
+
+        if not site:
+            continue
+
+        # Map lang code to country folder (best guess)
+        lang_to_country = {
+            "en": "us", "fr": "fr", "de": "de", "es": "es",
+            "it": "it", "pt": "pt", "ar": "ae", "nl": "nl",
+            "pl": "pl", "ru": "ru", "tr": "tr", "id": "id",
+            "ja": "jp", "ko": "kr", "zh": "cn", "hi": "in",
+        }
+        country = lang_to_country.get(lang, lang)
+        url = f"https://iptv-org.github.io/epg/guides/{country}/{site}.epg.xml"
+
+        if url not in seen:
+            seen.add(url)
+            urls.append(url)
+
+    # Add fallbacks at the end
+    for url in FALLBACK_EPG_URLS:
+        if url not in seen:
+            seen.add(url)
+            urls.append(url)
+
+    return urls
+
+# ─────────────────────────────────────────────
 # FETCH EPG XML CONTENT
 # ─────────────────────────────────────────────
 
@@ -61,13 +138,12 @@ def fetch_epg_content(url: str) -> str:
         r = requests.get(url, headers=HEADERS, timeout=20)
         r.raise_for_status()
 
-        # Handle gzip compressed files
         content = r.content
         if url.endswith(".gz"):
             try:
                 content = gzip.decompress(content)
             except Exception:
-                pass  # Try decoding as-is if decompression fails
+                pass
 
         return content.decode("utf-8", errors="ignore")
     except Exception as e:
@@ -75,22 +151,17 @@ def fetch_epg_content(url: str) -> str:
         return ""
 
 # ─────────────────────────────────────────────
-# PARSE EPG — extract channel + programme blocks
+# PARSE EPG
 # ─────────────────────────────────────────────
 
 def parse_epg(xml_content: str) -> tuple:
-    """
-    Returns:
-        channels   — dict of { channel_id: full_channel_xml_block }
-        programmes — list of full programme xml blocks
-    """
     channels   = {}
     programmes = []
 
     if not xml_content:
         return channels, programmes
 
-    # Extract full <channel ...>...</channel> blocks
+    # Extract full <channel> blocks
     channel_blocks = re.findall(
         r'(<channel[^>]+id="([^"]+)"[^>]*/?>(?:.*?</channel>)?)',
         xml_content, re.DOTALL
@@ -99,7 +170,7 @@ def parse_epg(xml_content: str) -> tuple:
         if ch_id and ch_id not in channels:
             channels[ch_id] = ch_block.strip()
 
-    # Extract full <programme ...>...</programme> blocks
+    # Extract full <programme> blocks
     programme_blocks = re.findall(
         r'(<programme\s[^>]*>.*?</programme>)',
         xml_content, re.DOTALL
@@ -112,34 +183,15 @@ def parse_epg(xml_content: str) -> tuple:
 # MERGE EPG SOURCES
 # ─────────────────────────────────────────────
 
-def merge_epg(guides: list) -> tuple:
-    """
-    Fetch and merge multiple EPG sources.
-    For duplicate channels — keep the one with most programme entries.
-    Returns: (channels_dict, programmes_list, fetched_count)
-    """
-    all_channels   = {}          # channel_id → xml block
-    all_programmes = []          # all programme entries
-    ch_prog_count  = defaultdict(int)  # channel_id → best programme count
+def merge_epg(epg_urls: list) -> tuple:
+    all_channels   = {}
+    all_programmes = []
+    ch_prog_count  = defaultdict(int)
+    fetched        = 0
 
-    # Deduplicate guide URLs first
-    seen_urls     = set()
-    unique_guides = []
-    for g in guides:
-        url = g.get("url", "").strip()
-        if url and url not in seen_urls:
-            seen_urls.add(url)
-            unique_guides.append(g)
+    print(f"  [~] Fetching up to {MAX_SITES} EPG sources...\n")
 
-    print(f"  [✓] Unique EPG sources: {len(unique_guides)}")
-    print(f"  [~] Fetching up to {MAX_SOURCES} sources...\n")
-
-    fetched = 0
-    for guide in unique_guides[:MAX_SOURCES]:
-        url = guide.get("url", "").strip()
-        if not url:
-            continue
-
+    for url in epg_urls[:MAX_SITES]:
         print(f"  [↓] {url[:80]}...")
         content = fetch_epg_content(url)
         if not content:
@@ -147,7 +199,6 @@ def merge_epg(guides: list) -> tuple:
 
         channels, programmes = parse_epg(content)
         if not channels and not programmes:
-            print(f"    [!] No data parsed from this source")
             continue
 
         # Count programmes per channel in this source
@@ -157,7 +208,7 @@ def merge_epg(guides: list) -> tuple:
             if ch_match:
                 source_counts[ch_match.group(1)] += 1
 
-        # For each channel — keep version with most programmes
+        # Keep version with most programmes per channel
         for ch_id, ch_block in channels.items():
             source_count = source_counts.get(ch_id, 0)
             if source_count > ch_prog_count.get(ch_id, 0):
@@ -183,13 +234,11 @@ def write_xmltv(channels: dict, programmes: list):
         f.write('<!DOCTYPE tv SYSTEM "xmltv.dtd">\n')
         f.write(f'<tv source-info-name="iptv-org-epg" generator-info-name="epg_builder" generated-at="{now}">\n\n')
 
-        # Write channel blocks
         for ch_block in channels.values():
             f.write(ch_block + "\n")
 
         f.write("\n")
 
-        # Write full programme blocks — these are already complete XML elements
         for prog in programmes:
             f.write(prog.strip() + "\n")
 
@@ -204,35 +253,37 @@ def write_xmltv(channels: dict, programmes: list):
 
 def main():
     print("\n╔══════════════════════════════════╗")
-    print("║        EPG Builder v1.1          ║")
+    print("║        EPG Builder v1.2          ║")
     print("╚══════════════════════════════════╝\n")
 
-    # Step 1 — Fetch guides list
+    # Step 1 — Fetch guides list to extract site names
     print("► Step 1: Fetching EPG guide sources...")
     guides = fetch_json("guides.json")
-    if not guides:
-        print("  [!] No guide sources found — aborting.")
-        sys.exit(1)
-    print(f"  [✓] Found {len(guides)} guide sources\n")
+    print(f"  [✓] Found {len(guides)} guide entries\n")
 
-    # Step 2 — Merge EPG sources
-    print("► Step 2: Fetching and merging EPG data...")
-    channels, programmes, fetched = merge_epg(guides)
+    # Step 2 — Build EPG URLs from site names
+    print("► Step 2: Building EPG URL list...")
+    epg_urls = build_epg_urls(guides)
+    print(f"  [✓] Built {len(epg_urls)} unique EPG URLs\n")
+
+    # Step 3 — Fetch and merge
+    print("► Step 3: Fetching and merging EPG data...")
+    channels, programmes, fetched = merge_epg(epg_urls)
 
     if fetched == 0:
-        print("  [!] No EPG sources fetched successfully — aborting.")
+        print("  [!] No EPG sources fetched — aborting.")
         sys.exit(1)
 
-    print(f"\n  [✓] Sources fetched:    {fetched}")
-    print(f"  [✓] Unique channels:    {len(channels)}")
-    print(f"  [✓] Total programmes:   {len(programmes)}\n")
+    print(f"\n  [✓] Sources fetched:  {fetched}")
+    print(f"  [✓] Unique channels:  {len(channels)}")
+    print(f"  [✓] Total programmes: {len(programmes)}\n")
 
     if not channels and not programmes:
         print("  [!] No EPG data to write — aborting.")
         sys.exit(1)
 
-    # Step 3 — Write output
-    print("► Step 3: Writing merged_epg.xml...")
+    # Step 4 — Write output
+    print("► Step 4: Writing merged_epg.xml...")
     write_xmltv(channels, programmes)
 
     print("\n╔══════════════════════════════════╗")
