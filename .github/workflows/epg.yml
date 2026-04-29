@@ -27,37 +27,59 @@ jobs:
       - name: Install Python dependencies
         run: pip install requests
 
+      - name: Ensure output directory exists
+        run: mkdir -p $GITHUB_WORKSPACE/output
+
       - name: Build channels.xml from playlist
         run: python scripts/channels_xml_builder.py
 
+      - name: Validate channels.xml exists and has content
+        run: |
+          if [ ! -f "$GITHUB_WORKSPACE/channels.xml" ]; then
+            echo "✗ channels.xml not found — aborting"
+            exit 1
+          fi
+          COUNT=$(grep -c "<channel" $GITHUB_WORKSPACE/channels.xml || true)
+          echo "✓ channels.xml has $COUNT channel entries"
+          if [ "$COUNT" -eq "0" ]; then
+            echo "✗ channels.xml is empty — aborting"
+            exit 1
+          fi
+
       - name: Clone iptv-org/epg grabber
         run: |
-          git clone --depth 1 https://github.com/iptv-org/epg.git epg-grabber
-          echo "Cloned iptv-org/epg successfully"
+          git clone --depth 1 https://github.com/iptv-org/epg.git $GITHUB_WORKSPACE/epg-grabber
+          echo "✓ Cloned iptv-org/epg"
 
       - name: Install EPG grabber dependencies
         run: |
-          cd epg-grabber
+          cd $GITHUB_WORKSPACE/epg-grabber
           npm install --prefer-offline --no-audit --no-fund
-          echo "npm install complete"
+          echo "✓ npm install complete"
 
-      - name: Run EPG grabber with memory limit
+      - name: Run EPG grabber
         run: |
-          cd epg-grabber
-          node --max-old-space-size=3072 node_modules/.bin/epg-grabber \
-            --channels=../channels.xml \
-            --output=../output/merged_epg.xml \
-            --timeout=5000 \
-            --concurrency=1
-          echo "EPG grab complete"
+          cd $GITHUB_WORKSPACE/epg-grabber
+          NODE_OPTIONS="--max-old-space-size=4096" npm run grab --- \
+            --channels=$GITHUB_WORKSPACE/channels.xml \
+            --output=$GITHUB_WORKSPACE/output/merged_epg.xml \
+            --timeout=10000 \
+            --maxConnections=1 \
+            --days=2
+          echo "✓ EPG grab complete"
 
-      - name: Verify output file
+      - name: Validate merged_epg.xml
         run: |
-          if [ -f "output/merged_epg.xml" ]; then
-            SIZE=$(du -sh output/merged_epg.xml | cut -f1)
-            echo "✓ merged_epg.xml generated — size: $SIZE"
-          else
+          if [ ! -f "$GITHUB_WORKSPACE/output/merged_epg.xml" ]; then
             echo "✗ merged_epg.xml not found — aborting"
+            exit 1
+          fi
+          SIZE=$(du -sh $GITHUB_WORKSPACE/output/merged_epg.xml | cut -f1)
+          CHANNELS=$(grep -c "<channel" $GITHUB_WORKSPACE/output/merged_epg.xml || true)
+          PROGRAMMES=$(grep -c "<programme" $GITHUB_WORKSPACE/output/merged_epg.xml || true)
+          echo "✓ merged_epg.xml: $SIZE | $CHANNELS channels | $PROGRAMMES programmes"
+          if [ "$CHANNELS" -eq "0" ] && [ "$PROGRAMMES" -eq "0" ]; then
+            echo "✗ EPG file has no data — aborting"
             exit 1
           fi
 
@@ -65,6 +87,6 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add output/merged_epg.xml
+          git add $GITHUB_WORKSPACE/output/merged_epg.xml
           git diff --staged --quiet || git commit -m "📺 Auto-update EPG [$(date -u '+%Y-%m-%d %H:%M UTC')]"
           git push origin main

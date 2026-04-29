@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-channels_xml_builder.py
+channels_xml_builder.py v1.1
 Reads merged_channels.m3u + iptv-org guides.json
 Builds channels.xml for iptv-org/epg grabber
 Only includes channels that have a known EPG guide entry
@@ -16,15 +16,18 @@ from collections import defaultdict
 # CONFIG
 # ─────────────────────────────────────────────
 
-PLAYLIST_FILE  = "output/merged_channels.m3u"
-OUTPUT_FILE    = "channels.xml"
+# Use GITHUB_WORKSPACE env var if available (GitHub Actions)
+# Fall back to current directory (local run)
+WORKSPACE      = os.environ.get("GITHUB_WORKSPACE", os.getcwd())
+PLAYLIST_FILE  = os.path.join(WORKSPACE, "output", "merged_channels.m3u")
+OUTPUT_FILE    = os.path.join(WORKSPACE, "channels.xml")
+OUTPUT_DIR     = os.path.join(WORKSPACE, "output")
 GUIDES_API     = "https://iptv-org.github.io/api/guides.json"
 HEADERS        = {"User-Agent": "Mozilla/5.0"}
 
-# Max channels to include in EPG grab
-# Keep reasonable to stay within GitHub Actions 6hr limit
-# Each channel takes ~2-5 seconds to grab
-MAX_CHANNELS   = 500
+# 200 channels = ~20-40 mins on GitHub Actions
+# Safe within the 5hr timeout and 7GB RAM limit
+MAX_CHANNELS   = 200
 
 # ─────────────────────────────────────────────
 # STEP 1 — READ CHANNEL IDs FROM PLAYLIST
@@ -34,9 +37,10 @@ def read_playlist_ids(playlist_file: str) -> list:
     """Extract tvg-id list from M3U playlist."""
     if not os.path.exists(playlist_file):
         print(f"  [!] Playlist not found: {playlist_file}")
+        print(f"  [!] Make sure Build Playlist workflow ran first.")
         return []
 
-    ids = []
+    ids  = []
     seen = set()
 
     with open(playlist_file, "r", encoding="utf-8", errors="ignore") as f:
@@ -55,14 +59,23 @@ def read_playlist_ids(playlist_file: str) -> list:
 # ─────────────────────────────────────────────
 
 def fetch_guides() -> list:
-    """Fetch guides.json from iptv-org API."""
     print(f"  [↓] Fetching {GUIDES_API}")
     try:
         r = requests.get(GUIDES_API, headers=HEADERS, timeout=30)
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+        if not isinstance(data, list):
+            print(f"  [!] Unexpected response format from guides.json")
+            return []
+        return data
+    except requests.exceptions.ConnectionError:
+        print(f"  [!] Connection failed")
+        return []
+    except requests.exceptions.Timeout:
+        print(f"  [!] Request timed out")
+        return []
     except Exception as e:
-        print(f"  [!] Failed to fetch guides: {e}")
+        print(f"  [!] Failed: {e}")
         return []
 
 # ─────────────────────────────────────────────
@@ -70,10 +83,6 @@ def fetch_guides() -> list:
 # ─────────────────────────────────────────────
 
 def build_guide_map(guides: list) -> dict:
-    """
-    Build a map of channel_id → list of guide entries.
-    guides.json structure: { channel, site, site_id, site_name, lang }
-    """
     guide_map = defaultdict(list)
     for g in guides:
         ch_id = (g.get("channel") or "").strip()
@@ -85,12 +94,8 @@ def build_guide_map(guides: list) -> dict:
 # STEP 4 — WRITE CHANNELS.XML
 # ─────────────────────────────────────────────
 
-def write_channels_xml(playlist_ids: list, guide_map: dict) -> int:
-    """
-    Match playlist channel IDs to guide entries.
-    Write channels.xml for iptv-org/epg grabber.
-    """
-    matched = []
+def write_channels_xml(playlist_ids: list, guide_map: dict) -> tuple:
+    matched   = []
     unmatched = 0
 
     for ch_id in playlist_ids:
@@ -99,13 +104,13 @@ def write_channels_xml(playlist_ids: list, guide_map: dict) -> int:
             unmatched += 1
             continue
 
-        # Pick the best guide entry — prefer English, else first available
+        # Prefer English guide, fall back to first available
         guide = next((g for g in guides if g.get("lang") == "en"), guides[0])
 
-        site      = (guide.get("site") or "").strip()
-        site_id   = (guide.get("site_id") or "").strip()
+        site      = (guide.get("site")      or "").strip()
+        site_id   = (guide.get("site_id")   or "").strip()
         site_name = (guide.get("site_name") or ch_id).strip()
-        lang      = (guide.get("lang") or "en").strip()
+        lang      = (guide.get("lang")      or "en").strip()
 
         if site and site_id:
             matched.append({
@@ -119,13 +124,20 @@ def write_channels_xml(playlist_ids: list, guide_map: dict) -> int:
     # Cap at MAX_CHANNELS
     matched = matched[:MAX_CHANNELS]
 
-    # Write XML
+    # Ensure output dir exists
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    # Write channels.xml
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write('<?xml version="1.0" encoding="UTF-8"?>\n')
         f.write('<channels>\n')
         for ch in matched:
-            # Escape any XML special chars in site_name
-            name = ch["site_name"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            # Escape XML special characters
+            name = (ch["site_name"]
+                    .replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+                    .replace('"', "&quot;"))
             f.write(
                 f'  <channel site="{ch["site"]}" '
                 f'lang="{ch["lang"]}" '
@@ -143,10 +155,14 @@ def write_channels_xml(playlist_ids: list, guide_map: dict) -> int:
 
 def main():
     print("\n╔══════════════════════════════════╗")
-    print("║    Channels XML Builder v1.0     ║")
+    print("║    Channels XML Builder v1.1     ║")
     print("╚══════════════════════════════════╝\n")
 
-    # Step 1
+    print(f"  Workspace:     {WORKSPACE}")
+    print(f"  Playlist:      {PLAYLIST_FILE}")
+    print(f"  Output XML:    {OUTPUT_FILE}\n")
+
+    # Step 1 — Read playlist
     print("► Step 1: Reading playlist channel IDs...")
     playlist_ids = read_playlist_ids(PLAYLIST_FILE)
     if not playlist_ids:
@@ -154,7 +170,7 @@ def main():
         sys.exit(1)
     print(f"  [✓] Found {len(playlist_ids)} unique channel IDs\n")
 
-    # Step 2
+    # Step 2 — Fetch guides
     print("► Step 2: Fetching guides.json...")
     guides = fetch_guides()
     if not guides:
@@ -162,23 +178,31 @@ def main():
         sys.exit(1)
     print(f"  [✓] Loaded {len(guides)} guide entries\n")
 
-    # Step 3
+    # Step 3 — Build guide map
     print("► Step 3: Building guide map...")
     guide_map = build_guide_map(guides)
     print(f"  [✓] {len(guide_map)} channels have guide entries\n")
 
-    # Step 4
+    # Step 4 — Write channels.xml
     print("► Step 4: Writing channels.xml...")
     matched, unmatched = write_channels_xml(playlist_ids, guide_map)
     print(f"  [✓] Channels matched:   {matched}")
     print(f"  [✓] Channels unmatched: {unmatched}")
-    print(f"  [✓] Saved → {OUTPUT_FILE}\n")
+    print(f"  [✓] Saved → {OUTPUT_FILE}")
 
+    # Validate output has content
     if matched == 0:
-        print("  [!] No channels matched — aborting.")
+        print("  [!] No channels matched any guide — aborting.")
         sys.exit(1)
 
-    print("╔══════════════════════════════════╗")
+    # Print first 3 entries so we can verify in Actions log
+    print("\n  Preview (first 3 channels):")
+    with open(OUTPUT_FILE, "r") as f:
+        lines = f.readlines()
+    for line in lines[2:5]:
+        print(f"    {line.rstrip()}")
+
+    print("\n╔══════════════════════════════════╗")
     print("║           DONE ✓                 ║")
     print("╚══════════════════════════════════╝\n")
 
