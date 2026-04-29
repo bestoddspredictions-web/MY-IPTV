@@ -24,7 +24,7 @@ HEADERS        = {"User-Agent": "Mozilla/5.0"}
 # Max channels to include in EPG grab
 # Keep reasonable to stay within GitHub Actions 6hr limit
 # Each channel takes ~2-5 seconds to grab
-MAX_CHANNELS   = 2000
+MAX_CHANNELS   = 500
 
 # ─────────────────────────────────────────────
 # STEP 1 — READ CHANNEL IDs FROM PLAYLIST

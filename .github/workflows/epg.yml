@@ -2,14 +2,13 @@ name: Build EPG (Daily)
 
 on:
   schedule:
-    # Runs every day at 3:00 AM UTC
     - cron: '0 3 * * *'
   workflow_dispatch:
 
 jobs:
   build-epg:
     runs-on: ubuntu-latest
-    timeout-minutes: 300  # 5 hour limit
+    timeout-minutes: 300
 
     steps:
       - name: Checkout repository
@@ -42,10 +41,14 @@ jobs:
           npm install --prefer-offline --no-audit --no-fund
           echo "npm install complete"
 
-      - name: Run EPG grabber
+      - name: Run EPG grabber with memory limit
         run: |
           cd epg-grabber
-          npm run grab -- --channels=../channels.xml --output=../output/merged_epg.xml --timeout=5000
+          node --max-old-space-size=3072 node_modules/.bin/epg-grabber \
+            --channels=../channels.xml \
+            --output=../output/merged_epg.xml \
+            --timeout=5000 \
+            --concurrency=1
           echo "EPG grab complete"
 
       - name: Verify output file
