@@ -57,32 +57,29 @@ jobs:
           npm install --prefer-offline --no-audit --no-fund
           echo "✓ npm install complete"
 
+      - name: Free up system memory before grabber
+        run: |
+          # Drop caches to free as much RAM as possible before Node runs
+          sudo sync
+          sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches' || true
+          free -h
+          echo "✓ Memory freed"
+
       - name: Find grabber entry point
         run: |
           cd $GITHUB_WORKSPACE/epg-grabber
-          # Find the actual grab script entry point
-          GRAB_SCRIPT=$(node -e "const p=require('./package.json'); const s=p.scripts&&p.scripts.grab; console.log(s||'')" 2>/dev/null || echo "")
-          echo "Grab script: $GRAB_SCRIPT"
-          # Find main JS file
-          ls src/ 2>/dev/null || true
-          ls scripts/ 2>/dev/null || true
           cat package.json | grep -A5 '"scripts"'
 
       - name: Run EPG grabber with explicit node memory
         run: |
           cd $GITHUB_WORKSPACE/epg-grabber
-
-          # Export memory setting for all node processes
           export NODE_OPTIONS="--max-old-space-size=5120"
-
-          # Run via npm with triple dash separator
           npm run grab --- \
             --channels=$GITHUB_WORKSPACE/channels.xml \
             --output=$GITHUB_WORKSPACE/output/merged_epg.xml \
             --timeout=10000 \
             --maxConnections=1 \
             --days=1
-
           echo "✓ EPG grab complete"
 
       - name: Validate merged_epg.xml

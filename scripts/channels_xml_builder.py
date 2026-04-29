@@ -27,7 +27,7 @@ HEADERS        = {"User-Agent": "Mozilla/5.0"}
 
 # 200 channels = ~20-40 mins on GitHub Actions
 # Safe within the 5hr timeout and 7GB RAM limit
-MAX_CHANNELS   = 100
+MAX_CHANNELS   = 500
 
 # ─────────────────────────────────────────────
 # STEP 1 — READ CHANNEL IDs FROM PLAYLIST
