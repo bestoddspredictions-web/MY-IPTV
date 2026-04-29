@@ -4,26 +4,59 @@ on:
   schedule:
     # Runs every day at 3:00 AM UTC
     - cron: '0 3 * * *'
-  workflow_dispatch:  # Allows manual trigger from GitHub UI
+  workflow_dispatch:
 
 jobs:
   build-epg:
     runs-on: ubuntu-latest
+    timeout-minutes: 300  # 5 hour limit
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Python dependencies
         run: pip install requests
 
-      - name: Run EPG Builder
-        run: python scripts/epg_builder.py
+      - name: Build channels.xml from playlist
+        run: python scripts/channels_xml_builder.py
+
+      - name: Clone iptv-org/epg grabber
+        run: |
+          git clone --depth 1 https://github.com/iptv-org/epg.git epg-grabber
+          echo "Cloned iptv-org/epg successfully"
+
+      - name: Install EPG grabber dependencies
+        run: |
+          cd epg-grabber
+          npm install --prefer-offline --no-audit --no-fund
+          echo "npm install complete"
+
+      - name: Run EPG grabber
+        run: |
+          cd epg-grabber
+          npm run grab -- --channels=../channels.xml --output=../output/merged_epg.xml --timeout=5000
+          echo "EPG grab complete"
+
+      - name: Verify output file
+        run: |
+          if [ -f "output/merged_epg.xml" ]; then
+            SIZE=$(du -sh output/merged_epg.xml | cut -f1)
+            echo "✓ merged_epg.xml generated — size: $SIZE"
+          else
+            echo "✗ merged_epg.xml not found — aborting"
+            exit 1
+          fi
 
       - name: Commit and push output
         run: |
@@ -31,4 +64,4 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add output/merged_epg.xml
           git diff --staged --quiet || git commit -m "📺 Auto-update EPG [$(date -u '+%Y-%m-%d %H:%M UTC')]"
-          git push
+          git push origin main
