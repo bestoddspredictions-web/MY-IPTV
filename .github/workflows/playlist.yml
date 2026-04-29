@@ -4,31 +4,45 @@ on:
   schedule:
     # Runs every Sunday at 2:00 AM UTC
     - cron: '0 2 * * 0'
-  workflow_dispatch:  # Allows manual trigger from GitHub UI
+  workflow_dispatch:
 
 jobs:
   build-playlist:
     runs-on: ubuntu-latest
+    timeout-minutes: 120  # 2 hours — enough for dead stream checking
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
       - name: Install dependencies
         run: pip install requests
 
+      - name: Ensure output directory exists
+        run: mkdir -p $GITHUB_WORKSPACE/output
+
       - name: Run Playlist Builder
         run: python scripts/playlist_builder.py
+
+      - name: Validate output
+        run: |
+          if [ ! -f "$GITHUB_WORKSPACE/output/merged_channels.m3u" ]; then
+            echo "✗ merged_channels.m3u not found"
+            exit 1
+          fi
+          COUNT=$(grep -c "#EXTINF" $GITHUB_WORKSPACE/output/merged_channels.m3u || true)
+          SIZE=$(du -sh $GITHUB_WORKSPACE/output/merged_channels.m3u | cut -f1)
+          echo "✓ merged_channels.m3u: $SIZE | $COUNT channels"
 
       - name: Commit and push output
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add output/merged_channels.m3u
+          git add $GITHUB_WORKSPACE/output/merged_channels.m3u
           git diff --staged --quiet || git commit -m "🔄 Auto-update playlist [$(date -u '+%Y-%m-%d %H:%M UTC')]"
-          git push
+          git push origin main
