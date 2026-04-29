@@ -33,16 +33,16 @@ jobs:
       - name: Build channels.xml from playlist
         run: python scripts/channels_xml_builder.py
 
-      - name: Validate channels.xml exists and has content
+      - name: Validate channels.xml has content
         run: |
           if [ ! -f "$GITHUB_WORKSPACE/channels.xml" ]; then
-            echo "✗ channels.xml not found — aborting"
+            echo "✗ channels.xml not found"
             exit 1
           fi
           COUNT=$(grep -c "<channel" $GITHUB_WORKSPACE/channels.xml || true)
           echo "✓ channels.xml has $COUNT channel entries"
           if [ "$COUNT" -eq "0" ]; then
-            echo "✗ channels.xml is empty — aborting"
+            echo "✗ channels.xml is empty"
             exit 1
           fi
 
@@ -57,29 +57,46 @@ jobs:
           npm install --prefer-offline --no-audit --no-fund
           echo "✓ npm install complete"
 
-      - name: Run EPG grabber
+      - name: Find grabber entry point
         run: |
           cd $GITHUB_WORKSPACE/epg-grabber
-          NODE_OPTIONS="--max-old-space-size=4096" npm run grab --- \
+          # Find the actual grab script entry point
+          GRAB_SCRIPT=$(node -e "const p=require('./package.json'); const s=p.scripts&&p.scripts.grab; console.log(s||'')" 2>/dev/null || echo "")
+          echo "Grab script: $GRAB_SCRIPT"
+          # Find main JS file
+          ls src/ 2>/dev/null || true
+          ls scripts/ 2>/dev/null || true
+          cat package.json | grep -A5 '"scripts"'
+
+      - name: Run EPG grabber with explicit node memory
+        run: |
+          cd $GITHUB_WORKSPACE/epg-grabber
+
+          # Export memory setting for all node processes
+          export NODE_OPTIONS="--max-old-space-size=5120"
+
+          # Run via npm with triple dash separator
+          npm run grab --- \
             --channels=$GITHUB_WORKSPACE/channels.xml \
             --output=$GITHUB_WORKSPACE/output/merged_epg.xml \
             --timeout=10000 \
             --maxConnections=1 \
-            --days=2
+            --days=1
+
           echo "✓ EPG grab complete"
 
       - name: Validate merged_epg.xml
         run: |
           if [ ! -f "$GITHUB_WORKSPACE/output/merged_epg.xml" ]; then
-            echo "✗ merged_epg.xml not found — aborting"
+            echo "✗ merged_epg.xml not found"
             exit 1
           fi
           SIZE=$(du -sh $GITHUB_WORKSPACE/output/merged_epg.xml | cut -f1)
           CHANNELS=$(grep -c "<channel" $GITHUB_WORKSPACE/output/merged_epg.xml || true)
           PROGRAMMES=$(grep -c "<programme" $GITHUB_WORKSPACE/output/merged_epg.xml || true)
-          echo "✓ merged_epg.xml: $SIZE | $CHANNELS channels | $PROGRAMMES programmes"
+          echo "✓ Size: $SIZE | Channels: $CHANNELS | Programmes: $PROGRAMMES"
           if [ "$CHANNELS" -eq "0" ] && [ "$PROGRAMMES" -eq "0" ]; then
-            echo "✗ EPG file has no data — aborting"
+            echo "✗ EPG file has no data"
             exit 1
           fi
 
