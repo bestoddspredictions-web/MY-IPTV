@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Script 2 — EPG Builder v1.3
-Uses reliable external XMLTV EPG sources directly.
-iptv-org guides.json approach abandoned — URLs are not publicly hosted.
+Script 2 — EPG Builder v1.2
+guides.json has NO url field — it maps channels to EPG sites.
+We use it to build per-site XMLTV URLs and fetch them directly.
 Outputs: output/merged_epg.xml
 Run: Daily via GitHub Actions
 """
@@ -19,44 +19,115 @@ from collections import defaultdict
 # CONFIG
 # ─────────────────────────────────────────────
 
+API_BASE    = "https://iptv-org.github.io/api"
 OUTPUT_DIR  = "output"
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, "merged_epg.xml")
 HEADERS     = {"User-Agent": "Mozilla/5.0"}
 
-# ─────────────────────────────────────────────
-# RELIABLE FREE XMLTV EPG SOURCES
-# These are known-working public XMLTV feeds
-# ─────────────────────────────────────────────
+# Max EPG sites to fetch (each site has its own XML file)
+MAX_SITES = 50
 
-EPG_SOURCES = [
-    # Global / Multi-region
-    "https://epg.pw/api/epg.xml",
-    "https://raw.githubusercontent.com/dp247/Freeview-EPG/master/epg.xml",
+# Known EPG XML URL patterns for popular sites
+# Format: site domain → URL template (use {lang} if needed)
+KNOWN_EPG_SITES = {
+    "tvtv.us":           "https://iptv-org.github.io/epg/guides/us/tvtv.us.epg.xml",
+    "sky.co.uk":         "https://iptv-org.github.io/epg/guides/gb/sky.co.uk.epg.xml",
+    "tvguide.com":       "https://iptv-org.github.io/epg/guides/us/tvguide.com.epg.xml",
+    "tv.apple.com":      "https://iptv-org.github.io/epg/guides/us/tv.apple.com.epg.xml",
+    "bbc.co.uk":         "https://iptv-org.github.io/epg/guides/gb/bbc.co.uk.epg.xml",
+    "rcti.id":           "https://iptv-org.github.io/epg/guides/id/rcti.id.epg.xml",
+    "ontvtonight.com":   "https://iptv-org.github.io/epg/guides/us/ontvtonight.com.epg.xml",
+}
 
-    # UK
-    "https://raw.githubusercontent.com/AbuseGr/EPG/master/UK.xml",
-    "https://raw.githubusercontent.com/iptv-org/epg/master/scripts/utils/parser.js",
-
-    # USA
-    "https://raw.githubusercontent.com/matthuisman/i.mjh.nz/master/PlutoTV/us.xml",
-    "https://i.mjh.nz/PlutoTV/us.xml",
-
-    # Middle East / Arabic
-    "https://i.mjh.nz/PlutoTV/all.xml",
-    "https://raw.githubusercontent.com/AbuseGr/EPG/master/ArabicEPG.xml",
-
-    # Pluto TV (global — best free EPG source)
-    "https://i.mjh.nz/PlutoTV/all.xml.gz",
-
-    # Samsung TV Plus (global)
-    "https://i.mjh.nz/SamsungTVPlus/all.xml",
-    "https://i.mjh.nz/SamsungTVPlus/all.xml.gz",
-
-    # Free global sources
-    "https://raw.githubusercontent.com/acidjesuz/epg-github/master/guide.xml",
-    "https://raw.githubusercontent.com/matthuisman/i.mjh.nz/master/all.xml",
-    "https://i.mjh.nz/all.xml",
+# Fallback EPG sources (these are standalone XMLTV files)
+FALLBACK_EPG_URLS = [
+    "https://iptv-org.github.io/epg/guides/us/tvtv.us.epg.xml",
+    "https://iptv-org.github.io/epg/guides/gb/sky.co.uk.epg.xml",
+    "https://iptv-org.github.io/epg/guides/us/tvguide.com.epg.xml",
+    "https://iptv-org.github.io/epg/guides/gb/bbc.co.uk.epg.xml",
+    "https://iptv-org.github.io/epg/guides/de/tvspielfilm.de.epg.xml",
+    "https://iptv-org.github.io/epg/guides/fr/programme-tv.net.epg.xml",
+    "https://iptv-org.github.io/epg/guides/es/movistar.es.epg.xml",
+    "https://iptv-org.github.io/epg/guides/au/foxtel.com.au.epg.xml",
+    "https://iptv-org.github.io/epg/guides/us/ontvtonight.com.epg.xml",
+    "https://iptv-org.github.io/epg/guides/ae/osn.com.epg.xml",
+    "https://iptv-org.github.io/epg/guides/sa/shahid.net.epg.xml",
+    "https://iptv-org.github.io/epg/guides/eg/shahid.net.epg.xml",
 ]
+
+# ─────────────────────────────────────────────
+# FETCH JSON
+# ─────────────────────────────────────────────
+
+def fetch_json(endpoint: str) -> list:
+    url = f"{API_BASE}/{endpoint}"
+    print(f"  [↓] Fetching {url}")
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        if not isinstance(data, list):
+            print(f"  [!] Unexpected response format")
+            return []
+        return data
+    except requests.exceptions.ConnectionError:
+        print(f"  [!] Connection failed — check internet connection")
+        return []
+    except requests.exceptions.Timeout:
+        print(f"  [!] Request timed out")
+        return []
+    except Exception as e:
+        print(f"  [!] Failed: {e}")
+        return []
+
+# ─────────────────────────────────────────────
+# BUILD EPG URL LIST FROM GUIDES.JSON
+# ─────────────────────────────────────────────
+
+def build_epg_urls(guides: list) -> list:
+    """
+    guides.json = list of { channel, site, site_id, lang }
+    Build XMLTV URLs from the site names using iptv-org EPG pattern.
+    Pattern: https://iptv-org.github.io/epg/guides/{country}/{site}.epg.xml
+    """
+    seen   = set()
+    urls   = []
+
+    # First add known sites
+    for site, url in KNOWN_EPG_SITES.items():
+        if url not in seen:
+            seen.add(url)
+            urls.append(url)
+
+    # Then build URLs from guides.json site names
+    for guide in guides:
+        site = guide.get("site", "").strip()
+        lang = guide.get("lang", "en").strip()
+
+        if not site:
+            continue
+
+        # Map lang code to country folder (best guess)
+        lang_to_country = {
+            "en": "us", "fr": "fr", "de": "de", "es": "es",
+            "it": "it", "pt": "pt", "ar": "ae", "nl": "nl",
+            "pl": "pl", "ru": "ru", "tr": "tr", "id": "id",
+            "ja": "jp", "ko": "kr", "zh": "cn", "hi": "in",
+        }
+        country = lang_to_country.get(lang, lang)
+        url = f"https://iptv-org.github.io/epg/guides/{country}/{site}.epg.xml"
+
+        if url not in seen:
+            seen.add(url)
+            urls.append(url)
+
+    # Add fallbacks at the end
+    for url in FALLBACK_EPG_URLS:
+        if url not in seen:
+            seen.add(url)
+            urls.append(url)
+
+    return urls
 
 # ─────────────────────────────────────────────
 # FETCH EPG XML CONTENT
@@ -64,45 +135,19 @@ EPG_SOURCES = [
 
 def fetch_epg_content(url: str) -> str:
     try:
-        r = requests.get(url, headers=HEADERS, timeout=30)
+        r = requests.get(url, headers=HEADERS, timeout=20)
         r.raise_for_status()
 
         content = r.content
-
-        # Handle gzip
         if url.endswith(".gz"):
             try:
                 content = gzip.decompress(content)
             except Exception:
                 pass
 
-        # Also try gzip if content-encoding says so
-        elif r.headers.get("content-encoding") == "gzip":
-            try:
-                content = gzip.decompress(content)
-            except Exception:
-                pass
-
-        decoded = content.decode("utf-8", errors="ignore")
-
-        # Validate it looks like XMLTV
-        if "<tv" not in decoded and "<channel" not in decoded:
-            print(f"    [!] Response is not valid XMLTV")
-            return ""
-
-        return decoded
-
-    except requests.exceptions.ConnectionError:
-        print(f"    [!] Connection failed")
-        return ""
-    except requests.exceptions.Timeout:
-        print(f"    [!] Timed out")
-        return ""
-    except requests.exceptions.HTTPError as e:
-        print(f"    [!] HTTP {e.response.status_code}")
-        return ""
+        return content.decode("utf-8", errors="ignore")
     except Exception as e:
-        print(f"    [!] Error: {e}")
+        print(f"    [!] Failed: {e}")
         return ""
 
 # ─────────────────────────────────────────────
@@ -144,7 +189,9 @@ def merge_epg(epg_urls: list) -> tuple:
     ch_prog_count  = defaultdict(int)
     fetched        = 0
 
-    for url in epg_urls:
+    print(f"  [~] Fetching up to {MAX_SITES} EPG sources...\n")
+
+    for url in epg_urls[:MAX_SITES]:
         print(f"  [↓] {url[:80]}...")
         content = fetch_epg_content(url)
         if not content:
@@ -185,7 +232,7 @@ def write_xmltv(channels: dict, programmes: list):
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write('<?xml version="1.0" encoding="UTF-8"?>\n')
         f.write('<!DOCTYPE tv SYSTEM "xmltv.dtd">\n')
-        f.write(f'<tv source-info-name="merged-epg" generator-info-name="epg_builder" generated-at="{now}">\n\n')
+        f.write(f'<tv source-info-name="iptv-org-epg" generator-info-name="epg_builder" generated-at="{now}">\n\n')
 
         for ch_block in channels.values():
             f.write(ch_block + "\n")
@@ -206,17 +253,28 @@ def write_xmltv(channels: dict, programmes: list):
 
 def main():
     print("\n╔══════════════════════════════════╗")
-    print("║        EPG Builder v1.3          ║")
+    print("║        EPG Builder v1.2          ║")
     print("╚══════════════════════════════════╝\n")
 
-    print(f"► Fetching {len(EPG_SOURCES)} EPG sources...\n")
-    channels, programmes, fetched = merge_epg(EPG_SOURCES)
+    # Step 1 — Fetch guides list to extract site names
+    print("► Step 1: Fetching EPG guide sources...")
+    guides = fetch_json("guides.json")
+    print(f"  [✓] Found {len(guides)} guide entries\n")
+
+    # Step 2 — Build EPG URLs from site names
+    print("► Step 2: Building EPG URL list...")
+    epg_urls = build_epg_urls(guides)
+    print(f"  [✓] Built {len(epg_urls)} unique EPG URLs\n")
+
+    # Step 3 — Fetch and merge
+    print("► Step 3: Fetching and merging EPG data...")
+    channels, programmes, fetched = merge_epg(epg_urls)
 
     if fetched == 0:
-        print("  [!] No EPG sources fetched successfully — aborting.")
+        print("  [!] No EPG sources fetched — aborting.")
         sys.exit(1)
 
-    print(f"\n  [✓] Sources fetched:  {fetched}/{len(EPG_SOURCES)}")
+    print(f"\n  [✓] Sources fetched:  {fetched}")
     print(f"  [✓] Unique channels:  {len(channels)}")
     print(f"  [✓] Total programmes: {len(programmes)}\n")
 
@@ -224,7 +282,8 @@ def main():
         print("  [!] No EPG data to write — aborting.")
         sys.exit(1)
 
-    print("► Writing merged_epg.xml...")
+    # Step 4 — Write output
+    print("► Step 4: Writing merged_epg.xml...")
     write_xmltv(channels, programmes)
 
     print("\n╔══════════════════════════════════╗")

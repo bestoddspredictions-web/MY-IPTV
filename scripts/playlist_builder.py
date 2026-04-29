@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-Script 1 — Playlist Builder
+Script 1 — Playlist Builder v1.4
 Fetches channels + streams from iptv-org API.
-Filters online streams only.
 Outputs: output/merged_channels.m3u
 Run: Weekly via GitHub Actions
 """
@@ -50,6 +49,16 @@ def fetch_json(endpoint: str) -> list:
         return []
 
 # ─────────────────────────────────────────────
+# SAFE STRING HELPER
+# ─────────────────────────────────────────────
+
+def safe_str(value, fallback="") -> str:
+    """Safely convert any value to string — handles None, int, etc."""
+    if value is None:
+        return fallback
+    return str(value).strip()
+
+# ─────────────────────────────────────────────
 # BUILD M3U
 # ─────────────────────────────────────────────
 
@@ -66,26 +75,23 @@ def build_m3u(channels: dict, streams: list) -> tuple:
 
         for stream in streams:
 
-            # Only include online streams
-            if stream.get("status") != "online":
-                skipped += 1
-                continue
+            # Safely extract — some fields can be null in API
+            channel_id = safe_str(stream.get("channel"))
+            url        = safe_str(stream.get("url"))
 
-            channel_id = stream.get("channel", "").strip()
-            url        = stream.get("url", "").strip()
-
+            # Skip if missing channel ID or URL
             if not channel_id or not url:
                 skipped += 1
                 continue
 
             # Get channel metadata
             ch       = channels.get(channel_id, {})
-            name     = ch.get("name", channel_id).strip()
-            logo     = ch.get("logo", "").strip()
-            country  = ch.get("country", "").strip()
-            langs    = ch.get("languages", [])
+            name     = safe_str(ch.get("name"), channel_id)
+            logo     = safe_str(ch.get("logo"))
+            country  = safe_str(ch.get("country"))
+            langs    = ch.get("languages") or []
             language = ",".join(langs) if langs else ""
-            cats     = ch.get("categories", [])
+            cats     = ch.get("categories") or []
             group    = cats[0] if cats else "Uncategorised"
 
             # Build EXTINF line
@@ -102,12 +108,12 @@ def build_m3u(channels: dict, streams: list) -> tuple:
 
             f.write(extinf)
 
-            # Write referrer/user-agent if required by stream
-            http_referrer = stream.get("http_referrer", "").strip()
-            user_agent    = stream.get("user_agent", "").strip()
+            # NOTE: API renamed http_referrer → referrer in latest version
+            referrer   = safe_str(stream.get("referrer") or stream.get("http_referrer"))
+            user_agent = safe_str(stream.get("user_agent"))
 
-            if http_referrer:
-                f.write(f'#EXTVLCOPT:http-referrer={http_referrer}\n')
+            if referrer:
+                f.write(f'#EXTVLCOPT:http-referrer={referrer}\n')
             if user_agent:
                 f.write(f'#EXTVLCOPT:http-user-agent={user_agent}\n')
 
@@ -122,7 +128,7 @@ def build_m3u(channels: dict, streams: list) -> tuple:
 
 def main():
     print("\n╔══════════════════════════════════╗")
-    print("║      Playlist Builder v1.1       ║")
+    print("║      Playlist Builder v1.4       ║")
     print("╚══════════════════════════════════╝\n")
 
     # Step 1 — Fetch channels
@@ -140,13 +146,11 @@ def main():
     if not streams:
         print("  [!] No streams loaded — aborting.")
         sys.exit(1)
-    total  = len(streams)
-    online = sum(1 for s in streams if s.get("status") == "online")
-    print(f"  [✓] Total streams:  {total}")
-    print(f"  [✓] Online streams: {online}\n")
+    total = len(streams)
+    print(f"  [✓] Total streams: {total}\n")
 
-    if online == 0:
-        print("  [!] No online streams found — aborting.")
+    if total == 0:
+        print("  [!] No streams found — aborting.")
         sys.exit(1)
 
     # Step 3 — Build M3U
