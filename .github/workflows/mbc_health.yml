@@ -1,0 +1,42 @@
+name: MBC Health Check
+
+on:
+  schedule:
+    - cron: "0 6 * * *"  # Daily 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run health check
+        run: python scripts/mbc_health_check.py
+        continue-on-error: true  # Don't fail the whole workflow if streams are dead
+
+      - name: Show results
+        run: |
+          echo "=== HEALTH LOG ==="
+          cat output/mbc_health_log.json || echo "No log"
+
+      - name: Commit log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add output/mbc_health_log.json || true
+          git diff --staged --quiet || git commit -m "chore: MBC health check [$(date -u '+%Y-%m-%d %H:%M UTC')]"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

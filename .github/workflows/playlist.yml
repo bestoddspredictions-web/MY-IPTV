@@ -25,16 +25,16 @@ jobs:
       - name: Build main playlist
         run: python scripts/playlist_builder.py
 
-      - name: Merge MBC channels into main playlist
+      - name: Merge MBC channels
         run: python scripts/playlist_merger.py
 
       - name: Show summary
         run: |
-          echo "=== PLAYLIST STATS ==="
-          grep -c "#EXTINF" output/merged_channels.m3u || echo "0 channels"
+          echo "=== TOTAL CHANNELS ==="
+          grep -c "#EXTINF" output/merged_channels.m3u || echo "0"
           echo ""
-          echo "=== MBC CHANNELS IN MERGED ==="
-          grep -i "mbc" output/merged_channels.m3u | grep "#EXTINF" || echo "No MBC channels"
+          echo "=== MBC CHANNELS INCLUDED ==="
+          grep -i "#EXTINF.*mbc" output/merged_channels.m3u || echo "None found"
 
       - name: Commit and push
         run: |
