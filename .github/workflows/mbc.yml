@@ -8,7 +8,7 @@ on:
 jobs:
   fetch-mbc:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repo
@@ -31,7 +31,7 @@ jobs:
           cat output/mbc_fetch_log.json || echo "No log"
           echo ""
           echo "=== PLAYLIST PREVIEW ==="
-          head -60 output/mbc_channels.m3u || echo "No playlist"
+          head -80 output/mbc_channels.m3u || echo "No playlist"
 
       - name: Commit and push
         run: |

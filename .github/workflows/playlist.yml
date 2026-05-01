@@ -1,48 +1,47 @@
-name: Build Playlist (Weekly)
+name: Build Playlist
 
 on:
   schedule:
-    # Runs every Sunday at 2:00 AM UTC
-    - cron: '0 2 * * 0'
+    - cron: "0 2 * * 0"  # Weekly Sunday 02:00 UTC
   workflow_dispatch:
 
 jobs:
-  build-playlist:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120  # 2 hours — enough for dead stream checking
+    timeout-minutes: 30
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
         run: pip install requests
 
-      - name: Ensure output directory exists
-        run: mkdir -p $GITHUB_WORKSPACE/output
-
-      - name: Run Playlist Builder
+      - name: Build main playlist
         run: python scripts/playlist_builder.py
 
-      - name: Validate output
-        run: |
-          if [ ! -f "$GITHUB_WORKSPACE/output/merged_channels.m3u" ]; then
-            echo "✗ merged_channels.m3u not found"
-            exit 1
-          fi
-          COUNT=$(grep -c "#EXTINF" $GITHUB_WORKSPACE/output/merged_channels.m3u || true)
-          SIZE=$(du -sh $GITHUB_WORKSPACE/output/merged_channels.m3u | cut -f1)
-          echo "✓ merged_channels.m3u: $SIZE | $COUNT channels"
+      - name: Merge MBC channels into main playlist
+        run: python scripts/playlist_merger.py
 
-      - name: Commit and push output
+      - name: Show summary
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add $GITHUB_WORKSPACE/output/merged_channels.m3u
-          git diff --staged --quiet || git commit -m "🔄 Auto-update playlist [$(date -u '+%Y-%m-%d %H:%M UTC')]"
-          git push origin main
+          echo "=== PLAYLIST STATS ==="
+          grep -c "#EXTINF" output/merged_channels.m3u || echo "0 channels"
+          echo ""
+          echo "=== MBC CHANNELS IN MERGED ==="
+          grep -i "mbc" output/merged_channels.m3u | grep "#EXTINF" || echo "No MBC channels"
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add output/merged_channels.m3u || true
+          git diff --staged --quiet || git commit -m "chore: rebuild playlist [$(date -u '+%Y-%m-%d %H:%M UTC')]"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
