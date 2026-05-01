@@ -1,302 +1,207 @@
 #!/usr/bin/env python3
 """
-mbc_fetcher.py v4.0
-Fetches live HLS stream URLs for all MBC Group channels from elahmad.com
-Uses the mobile API endpoint (glarb.php) discovered via network inspection.
+mbc_fetcher.py v5.0
+Fetches MBC Group channels from elahmad.org's own M3U playlist endpoint.
+Filters MBC channels and saves to output/mbc_channels.m3u
 
-Endpoint : POST http://www.elahmad.com/tv/mobiletv/glarb.php
-Headers  : Origin  → http://www.elahmad.com
-           Referer → http://www.elahmad.com/tv/extension.php?id={channel_id}
-
-Output   : output/mbc_channels.m3u
-           output/mbc_fetch_log.json
+Strategy:
+1. Fetch the full elahmad.org playlist (231 channels)
+2. Filter only MBC group channels
+3. Save clean M3U to output/mbc_channels.m3u
 """
 
 import requests
-import re
-import json
 import os
+import json
 import time
 from datetime import datetime
 
 # ─── OUTPUT SETUP ────────────────────────────────────────────────────────────
-OUTPUT_DIR  = "output"
-OUTPUT_M3U  = os.path.join(OUTPUT_DIR, "mbc_channels.m3u")
-OUTPUT_LOG  = os.path.join(OUTPUT_DIR, "mbc_fetch_log.json")
+OUTPUT_DIR = "output"
+OUTPUT_M3U = os.path.join(OUTPUT_DIR, "mbc_channels.m3u")
+OUTPUT_LOG = os.path.join(OUTPUT_DIR, "mbc_fetch_log.json")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# ─── API CONFIG ──────────────────────────────────────────────────────────────
-BASE_URL      = "http://www.elahmad.com"
-API_ENDPOINT  = f"{BASE_URL}/tv/mobiletv/glarb.php"
-REFERER_TMPL  = f"{BASE_URL}/tv/extension.php?id={{channel_id}}"
+# ─── PLAYLIST URLS TO TRY ────────────────────────────────────────────────────
+# Multiple URLs in case one is blocked or token changes
+PLAYLIST_URLS = [
+    "https://www.elahmad.org/tv/m3u/play_list_3.m3u?id=arabic_1&t=111111111",
+    "https://www.elahmad.org/tv/m3u/play_list_3.m3u?id=arabic_1&t=999999999",
+    "https://www.elahmad.org/tv/m3u/play_list_3.m3u?id=arabic_1",
+    "http://www.elahmad.org/tv/m3u/play_list_3.m3u?id=arabic_1&t=111111111",
+]
 
-# ─── SESSION HEADERS ─────────────────────────────────────────────────────────
-# Origin and Referer are REQUIRED — removing either causes the server to reject
-# the request and return nothing (same as pasting the URL directly in VLC).
-BASE_HEADERS = {
-    "User-Agent"      : "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 Chrome/124 Mobile Safari/537.36",
-    "Accept"          : "application/json, text/plain, */*",
-    "Accept-Language" : "en-US,en;q=0.9,ar;q=0.8",
-    "Origin"          : BASE_URL,
-    "Connection"      : "keep-alive",
-}
-
-SESSION = requests.Session()
-SESSION.headers.update(BASE_HEADERS)
-
-# ─── MBC CHANNELS ────────────────────────────────────────────────────────────
-# id_candidates: list of IDs to try in order (first working one wins)
-# Confirmed IDs from network inspection: mbc2tv, mbc_max, mbc_action
-MBC_CHANNELS = [
+# ─── HEADERS ─────────────────────────────────────────────────────────────────
+HEADERS_LIST = [
+    # Mobile browser headers
     {
-        "name"         : "MBC 1",
-        "tvg_id"       : "mbc1.sa",
-        "logo"         : "https://www.mbc.net/content/dam/mbc/ch/mbc1/logo/logo_mbc1.png",
-        "group"        : "MBC Group",
-        "id_candidates": ["mbc1tv", "mbc1", "mbc_1"],
+        "User-Agent": "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        "Referer": "https://www.elahmad.org/tv/stream_player.php",
+        "Origin": "https://www.elahmad.org",
+        "Accept": "*/*",
+        "Accept-Language": "ar,en;q=0.9",
     },
+    # Desktop browser headers
     {
-        "name"         : "MBC 2",
-        "tvg_id"       : "mbc2.sa",
-        "logo"         : "https://www.mbc.net/content/dam/mbc/ch/mbc2/logo/logo_mbc2.png",
-        "group"        : "MBC Group",
-        "id_candidates": ["mbc2tv", "mbc2", "mbc_2"],   # mbc2tv confirmed
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Referer": "https://www.elahmad.org/tv/stream_player.php",
+        "Origin": "https://www.elahmad.org",
+        "Accept": "*/*",
+        "Accept-Language": "ar,en;q=0.9",
     },
+    # Minimal headers
     {
-        "name"         : "MBC 3",
-        "tvg_id"       : "mbc3.sa",
-        "logo"         : "https://www.mbc.net/content/dam/mbc/ch/mbc3/logo/logo_mbc3.png",
-        "group"        : "MBC Group",
-        "id_candidates": ["mbc3tv", "mbc3", "mbc_3"],
-    },
-    {
-        "name"         : "MBC 4",
-        "tvg_id"       : "mbc4.sa",
-        "logo"         : "https://www.mbc.net/content/dam/mbc/ch/mbc4/logo/logo_mbc4.png",
-        "group"        : "MBC Group",
-        "id_candidates": ["mbc4tv", "mbc4", "mbc_4"],
-    },
-    {
-        "name"         : "MBC 5",
-        "tvg_id"       : "mbc5.sa",
-        "logo"         : "https://www.mbc.net/content/dam/mbc/ch/mbc5/logo/logo_mbc5.png",
-        "group"        : "MBC Group",
-        "id_candidates": ["mbc5tv", "mbc5", "mbc_5"],
-    },
-    {
-        "name"         : "MBC Drama",
-        "tvg_id"       : "mbcdrama.sa",
-        "logo"         : "https://www.mbc.net/content/dam/mbc/ch/mbcdrama/logo/logo_mbcdrama.png",
-        "group"        : "MBC Group",
-        "id_candidates": ["mbc_drama", "mbcdramatv", "mbcdrama"],
-    },
-    {
-        "name"         : "MBC Drama Plus",
-        "tvg_id"       : "mbcdramaplus.sa",
-        "logo"         : "https://www.mbc.net/content/dam/mbc/ch/mbcdramaplus/logo/logo_mbcdramaplus.png",
-        "group"        : "MBC Group",
-        "id_candidates": ["mbc_drama_plus", "mbcdramaplus", "drama_plus"],
-    },
-    {
-        "name"         : "MBC Action",
-        "tvg_id"       : "mbcaction.sa",
-        "logo"         : "https://www.mbc.net/content/dam/mbc/ch/mbcaction/logo/logo_mbcaction.png",
-        "group"        : "MBC Group",
-        "id_candidates": ["mbc_action", "mbcaction", "mbcactiontv"],   # mbc_action confirmed
-    },
-    {
-        "name"         : "MBC Max",
-        "tvg_id"       : "mbcmax.sa",
-        "logo"         : "https://www.mbc.net/content/dam/mbc/ch/mbcmax/logo/logo_mbcmax.png",
-        "group"        : "MBC Group",
-        "id_candidates": ["mbc_max", "mbcmax", "mbcmaxtv"],            # mbc_max confirmed
-    },
-    {
-        "name"         : "MBC Masr",
-        "tvg_id"       : "mbcmasr.eg",
-        "logo"         : "https://www.mbc.net/content/dam/mbc/ch/mbcmasr/logo/logo_mbcmasr.png",
-        "group"        : "MBC Group",
-        "id_candidates": ["mbc_masr", "mbcmasrtv", "mbcmasr"],
-    },
-    {
-        "name"         : "MBC Masr 2",
-        "tvg_id"       : "mbcmasr2.eg",
-        "logo"         : "https://www.mbc.net/content/dam/mbc/ch/mbcmasr2/logo/logo_mbcmasr2.png",
-        "group"        : "MBC Group",
-        "id_candidates": ["mbc_masr2", "mbcmasr2tv", "mbcmasr2"],
-    },
-    {
-        "name"         : "MBC Iraq",
-        "tvg_id"       : "mbciraq.iq",
-        "logo"         : "https://www.mbc.net/content/dam/mbc/ch/mbciraq/logo/logo_mbciraq.png",
-        "group"        : "MBC Group",
-        "id_candidates": ["mbc_iraq", "mbciraqtv", "mbciraq"],
-    },
-    {
-        "name"         : "MBC Variety",
-        "tvg_id"       : "mbcvariety.sa",
-        "logo"         : "https://www.mbc.net/content/dam/mbc/ch/mbcvariety/logo/logo_mbcvariety.png",
-        "group"        : "MBC Group",
-        "id_candidates": ["mbc_variety", "mbcvariety", "mbcvarietytv"],
-    },
-    {
-        "name"         : "MBC Persia",
-        "tvg_id"       : "mbcpersia.sa",
-        "logo"         : "https://www.mbc.net/content/dam/mbc/ch/mbcpersia/logo/logo_mbcpersia.png",
-        "group"        : "MBC Group",
-        "id_candidates": ["mbc_persia", "mbcpersia", "mbcpersiatv"],
-    },
-    {
-        "name"         : "MBC Bollywood",
-        "tvg_id"       : "mbcbollywood.sa",
-        "logo"         : "https://www.mbc.net/content/dam/mbc/ch/mbcbollywood/logo/logo_mbcbollywood.png",
-        "group"        : "MBC Group",
-        "id_candidates": ["mbc_bollywood", "mbcbollywood", "mbcbollywoodtv"],
-    },
-    {
-        "name"         : "MBC Life",
-        "tvg_id"       : "mbclife.sa",
-        "logo"         : "https://www.mbc.net/content/dam/mbc/ch/mbclife/logo/logo_mbclife.png",
-        "group"        : "MBC Group",
-        "id_candidates": ["mbc_life", "mbclife", "mbclifetv"],
-    },
-    {
-        "name"         : "MBC Masr Drama",
-        "tvg_id"       : "mbcmasrdrama.eg",
-        "logo"         : "https://www.mbc.net/content/dam/mbc/ch/mbcmasrdrama/logo/logo_mbcmasrdrama.png",
-        "group"        : "MBC Group",
-        "id_candidates": ["mbc_masr_drama", "mbcmasrdrama", "masrdrama"],
+        "User-Agent": "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/124 Mobile Safari/537.36",
+        "Referer": "https://www.elahmad.org/",
     },
 ]
 
-# ─── HELPERS ─────────────────────────────────────────────────────────────────
+# ─── MBC CHANNEL KEYWORDS ────────────────────────────────────────────────────
+# Used to filter MBC channels from the full playlist
+MBC_KEYWORDS = [
+    "mbc", "MBC", "Mbc",
+]
 
-def extract_stream_url(response_text: str) -> str | None:
-    """Extract an HLS .m3u8 URL from the API response."""
-    # Try JSON first
-    try:
-        data = json.loads(response_text)
-        for key in ("url", "stream", "link", "hls", "src", "source", "file"):
-            if key in data and isinstance(data[key], str) and "http" in data[key]:
-                return data[key].strip()
-        for val in data.values():
-            if isinstance(val, dict):
-                for k, v in val.items():
-                    if isinstance(v, str) and ".m3u8" in v:
-                        return v.strip()
-    except (json.JSONDecodeError, AttributeError):
-        pass
+# ─── FETCH PLAYLIST ──────────────────────────────────────────────────────────
 
-    # Fallback: regex scan for any .m3u8 URL in raw response
-    matches = re.findall(r'https?://[^\s"\'<>]+\.m3u8[^\s"\'<>]*', response_text)
-    if matches:
-        return matches[0].strip()
-
+def fetch_playlist() -> str | None:
+    """Try all URL + header combinations to fetch the playlist."""
+    for url in PLAYLIST_URLS:
+        for headers in HEADERS_LIST:
+            try:
+                print(f"\n  Trying: {url}")
+                print(f"  Referer: {headers.get('Referer', 'none')}")
+                
+                resp = requests.get(url, headers=headers, timeout=20)
+                
+                print(f"  Status: {resp.status_code}")
+                print(f"  Content length: {len(resp.text)} chars")
+                print(f"  Preview: {resp.text[:100]}")
+                
+                if resp.status_code == 200 and "#EXTM3U" in resp.text:
+                    print(f"  ✅ Got valid M3U playlist!")
+                    return resp.text
+                elif resp.status_code == 200:
+                    print(f"  ⚠ Got 200 but not M3U content")
+                else:
+                    print(f"  ❌ Failed: {resp.status_code}")
+                    
+            except requests.exceptions.ConnectionError as e:
+                print(f"  ❌ Connection error: {e}")
+            except requests.exceptions.Timeout:
+                print(f"  ⏱ Timeout")
+            except Exception as e:
+                print(f"  ⚠ Error: {e}")
+            
+            time.sleep(1)
+    
     return None
 
 
-def try_fetch_channel(channel_id: str) -> str | None:
-    """POST to the glarb.php mobile API with the given channel_id."""
-    referer = REFERER_TMPL.format(channel_id=channel_id)
-    headers = {**BASE_HEADERS, "Referer": referer}
+# ─── PARSE AND FILTER ────────────────────────────────────────────────────────
 
-    # Try multiple POST body formats
-    post_bodies = [
-        {"id"     : channel_id},
-        {"ch"     : channel_id},
-        {"channel": channel_id},
-        {"chid"   : channel_id},
-    ]
-
-    for body in post_bodies:
-        try:
-            resp = SESSION.post(API_ENDPOINT, data=body, headers=headers, timeout=15)
-            if resp.status_code == 200 and resp.text.strip():
-                stream = extract_stream_url(resp.text)
-                if stream:
-                    return stream
-        except requests.exceptions.ConnectionError:
-            print(f"    ❌ Connection error — site may be blocked. Enable VPN and retry.")
-            return None
-        except requests.exceptions.Timeout:
-            print(f"    ⏱ Timeout with body {body}")
-        except Exception as e:
-            print(f"    ⚠ Error: {e}")
-
-    return None
-
-
-def fetch_channel(ch: dict) -> str | None:
-    """Try all candidate IDs for a channel, return first working stream URL."""
-    for cid in ch["id_candidates"]:
-        print(f"  Trying id: {cid}")
-        stream = try_fetch_channel(cid)
-        if stream:
-            print(f"  ✅ Found stream with id='{cid}'")
-            return stream
-        time.sleep(0.4)
-    return None
+def filter_mbc_channels(m3u_content: str) -> list:
+    """Parse M3U and extract only MBC channels."""
+    channels = []
+    lines = m3u_content.strip().split("\n")
+    
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        
+        if line.startswith("#EXTINF"):
+            # Check if this is an MBC channel
+            is_mbc = any(kw in line for kw in MBC_KEYWORDS)
+            
+            # Also check the stream URL line
+            if i + 1 < len(lines):
+                next_line = lines[i + 1].strip()
+                if not is_mbc:
+                    is_mbc = any(kw.lower() in next_line.lower() for kw in ["mbc"])
+            
+            if is_mbc and i + 1 < len(lines):
+                extinf = line
+                stream_url = lines[i + 1].strip()
+                
+                # Make sure it's an actual stream URL
+                if stream_url.startswith("http"):
+                    channels.append((extinf, stream_url))
+                    print(f"  ✅ Found: {extinf[:80]}")
+        
+        i += 1
+    
+    return channels
 
 
-# ─── M3U WRITER ──────────────────────────────────────────────────────────────
+# ─── WRITE M3U ───────────────────────────────────────────────────────────────
 
-def write_m3u(results: list):
+def write_m3u(channels: list):
+    """Write filtered MBC channels to M3U file."""
     with open(OUTPUT_M3U, "w", encoding="utf-8") as f:
         f.write("#EXTM3U\n\n")
-        for ch, stream_url in results:
-            f.write(
-                f'#EXTINF:-1 tvg-id="{ch["tvg_id"]}" '
-                f'tvg-name="{ch["name"]}" '
-                f'tvg-logo="{ch["logo"]}" '
-                f'group-title="{ch["group"]}",{ch["name"]}\n'
-            )
-            f.write(f"{stream_url}\n\n")
-    print(f"✅ Wrote {len(results)} channels → {OUTPUT_M3U}")
+        for extinf, stream_url in channels:
+            # Ensure group-title is MBC Group
+            if "group-title=" not in extinf:
+                extinf = extinf.replace("#EXTINF:-1", '#EXTINF:-1 group-title="MBC Group"')
+            f.write(f"{extinf}\n{stream_url}\n\n")
+    
+    print(f"\n✅ Wrote {len(channels)} MBC channels → {OUTPUT_M3U}")
 
 
 # ─── MAIN ────────────────────────────────────────────────────────────────────
 
 def main():
     print("=" * 60)
-    print(f"MBC Fetcher v4.0  |  {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
-    print(f"Endpoint : {API_ENDPOINT}")
+    print(f"MBC Fetcher v5.0  |  {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
+    print("Strategy: Fetch elahmad.org M3U playlist, filter MBC channels")
     print("=" * 60)
 
-    found  = []
-    failed = []
+    # Step 1: Fetch the playlist
+    print("\n📡 Fetching playlist...")
+    content = fetch_playlist()
 
-    for ch in MBC_CHANNELS:
-        print(f"\n📺 {ch['name']}")
-        stream = fetch_channel(ch)
-        if stream:
-            found.append((ch, stream))
-        else:
-            print(f"  ❌ No stream found")
-            failed.append(ch["name"])
+    if not content:
+        print("\n❌ Could not fetch playlist from any URL/header combination")
+        print("   elahmad.org may be blocking this IP range")
+        
+        log = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "status": "failed",
+            "reason": "Could not fetch playlist - IP blocked or site down",
+            "found_count": 0,
+            "failed_count": 17,
+        }
+        with open(OUTPUT_LOG, "w") as f:
+            json.dump(log, f, indent=2)
+        return
 
-    print("\n" + "=" * 60)
-    print(f"RESULTS  ✅ {len(found)} found   ❌ {len(failed)} failed")
-    if failed:
-        print(f"Failed: {', '.join(failed)}")
+    # Step 2: Count total channels
+    total = content.count("#EXTINF")
+    print(f"\n📋 Total channels in playlist: {total}")
 
-    if found:
-        write_m3u(found)
+    # Step 3: Filter MBC channels
+    print("\n🔍 Filtering MBC channels...")
+    mbc_channels = filter_mbc_channels(content)
+
+    print(f"\n{'=' * 60}")
+    print(f"RESULTS  ✅ {len(mbc_channels)} MBC channels found from {total} total")
+
+    if mbc_channels:
+        write_m3u(mbc_channels)
     else:
-        print("\n⚠  No streams found.")
-        print("   → If elahmad.com is ISP-blocked locally, enable VPN and re-run")
-        print("   → Or push to GitHub — Actions servers are not ISP-blocked")
+        print("⚠ No MBC channels found in playlist")
 
+    # Save log
     log = {
-        "timestamp"      : datetime.utcnow().isoformat() + "Z",
-        "endpoint"       : API_ENDPOINT,
-        "found_count"    : len(found),
-        "failed_count"   : len(failed),
-        "found_channels" : [ch["name"] for ch, _ in found],
-        "failed_channels": failed,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "status": "success" if mbc_channels else "no_mbc_found",
+        "total_channels_in_playlist": total,
+        "mbc_found": len(mbc_channels),
+        "mbc_channels": [e.split(",")[-1] for e, _ in mbc_channels],
     }
     with open(OUTPUT_LOG, "w") as f:
         json.dump(log, f, indent=2)
-    print(f"Log saved → {OUTPUT_LOG}")
+    print(f"Log → {OUTPUT_LOG}")
 
 
 if __name__ == "__main__":
