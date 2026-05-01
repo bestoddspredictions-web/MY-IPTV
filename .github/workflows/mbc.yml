@@ -2,7 +2,7 @@ name: MBC Channels Fetch
 
 on:
   schedule:
-    - cron: "0 1 * * *"  # Daily 01:00 UTC
+    - cron: "0 1 * * *"
   workflow_dispatch:
 
 jobs:
@@ -20,7 +20,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install requests
+        run: pip install cloudscraper requests
 
       - name: Run MBC fetcher
         run: python scripts/mbc_fetcher.py
@@ -31,7 +31,7 @@ jobs:
           cat output/mbc_fetch_log.json || echo "No log"
           echo ""
           echo "=== PLAYLIST PREVIEW ==="
-          head -80 output/mbc_channels.m3u || echo "No playlist"
+          head -80 output/mbc_channels.m3u || echo "No playlist generated"
 
       - name: Commit and push
         run: |
