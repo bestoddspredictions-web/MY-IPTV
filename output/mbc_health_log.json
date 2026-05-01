@@ -1,0 +1,80 @@
+{
+  "timestamp": "2026-05-01T21:21:55.775236Z",
+  "alive_count": 10,
+  "dead_count": 0,
+  "alive": [
+    "MBC 2",
+    "MBC 3",
+    "MBC 4",
+    "MBC 5",
+    "MBC Drama",
+    "MBC Drama Plus",
+    "MBC Action",
+    "MBC Max",
+    "MBC Masr",
+    "MBC Masr 2"
+  ],
+  "dead": [],
+  "all_results": [
+    {
+      "name": "MBC 2",
+      "url": "https://shd-gcp-live.edgenextcdn.net/live/bitmovin-mbc-2/51db9d7fa48a27d051f1eecb68069151/index.mpd",
+      "status": 200,
+      "alive": true
+    },
+    {
+      "name": "MBC 3",
+      "url": "https://shd-gcp-live.edgenextcdn.net/live/bitmovin-mbc-3/946fc698e47c30df2193962ca541d868/index.mpd",
+      "status": 200,
+      "alive": true
+    },
+    {
+      "name": "MBC 4",
+      "url": "https://shd-gcp-live.edgenextcdn.net/live/bitmovin-mbc-4/24f134f1cd63db9346439e96b86ca6ed/index.m3u8",
+      "status": 200,
+      "alive": true
+    },
+    {
+      "name": "MBC 5",
+      "url": "https://shd-gcp-live.edgenextcdn.net/live/bitmovin-mbc-5/ee6b000cee0629411b666ab26cb13e9b/index.m3u8",
+      "status": 200,
+      "alive": true
+    },
+    {
+      "name": "MBC Drama",
+      "url": "https://shd-gcp-live.edgenextcdn.net/live/bitmovin-mbc-drama/2c28a458e2f3253e678b07ac7d13fe71/index.m3u8",
+      "status": 200,
+      "alive": true
+    },
+    {
+      "name": "MBC Drama Plus",
+      "url": "https://shd-gcp-live.edgenextcdn.net/live/bitmovin-mbc-plus-drama/e37251ec2aac8f6c98f75cd0fa37cd28/index.m3u8",
+      "status": 200,
+      "alive": true
+    },
+    {
+      "name": "MBC Action",
+      "url": "https://shd-gcp-live.edgenextcdn.net/live/bitmovin-mbc-action/8ea6ca1108d03e03da5e61372354f5c8/index.mpd",
+      "status": 200,
+      "alive": true
+    },
+    {
+      "name": "MBC Max",
+      "url": "https://shd-gcp-live.akamaized.net/live/bitmovin-mbc-max/b628d2bbaee0431a17859963edf2975f/index.mpd",
+      "status": 200,
+      "alive": true
+    },
+    {
+      "name": "MBC Masr",
+      "url": "https://shd-gcp-live.lg.mncdn.com/live/bitmovin-mbc-masr/956eac069c78a35d47245db6cdbb1575/index.m3u8",
+      "status": 200,
+      "alive": true
+    },
+    {
+      "name": "MBC Masr 2",
+      "url": "https://shd-gcp-live.edgenextcdn.net/live/bitmovin-mbc-masr-2/7eaa7c0393e9a9637ae311aac75eb40e/index.mpd",
+      "status": 200,
+      "alive": true
+    }
+  ]
+}
