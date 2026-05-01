@@ -19,16 +19,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Chrome
-        run: |
-          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-          sudo apt-get update -q
-          sudo apt-get install -y google-chrome-stable
-          google-chrome --version
-
       - name: Install Python dependencies
-        run: pip install undetected-chromedriver selenium requests
+        run: pip install playwright requests
+
+      - name: Install Playwright browsers
+        run: playwright install chromium --with-deps
 
       - name: Run MBC fetcher
         run: python scripts/mbc_fetcher.py
