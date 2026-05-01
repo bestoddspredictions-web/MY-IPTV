@@ -1,0 +1,47 @@
+name: MBC Channels Fetch
+
+on:
+  schedule:
+    # Runs daily at 01:00 UTC — one hour before the main playlist build (02:00)
+    - cron: "0 1 * * *"
+  workflow_dispatch: # Manual trigger from GitHub Actions tab
+
+jobs:
+  fetch-mbc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install requests
+
+      - name: Run MBC fetcher
+        run: |
+          python scripts/mbc_fetcher.py
+
+      - name: Show results
+        run: |
+          echo "=== MBC Fetch Log ==="
+          cat output/mbc_fetch_log.json || echo "No log file found"
+          echo ""
+          echo "=== MBC Playlist Preview ==="
+          head -40 output/mbc_channels.m3u || echo "No playlist generated"
+
+      - name: Commit and push results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add output/mbc_channels.m3u output/mbc_fetch_log.json || true
+          git diff --staged --quiet || git commit -m "chore: update MBC channels [$(date -u '+%Y-%m-%d %H:%M UTC')]"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
