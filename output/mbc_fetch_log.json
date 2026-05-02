@@ -1,0 +1,26 @@
+{
+  "timestamp": "2026-05-02T04:22:50.588919Z",
+  "method": "playwright-chromium",
+  "found_count": 0,
+  "failed_count": 17,
+  "found_channels": [],
+  "failed_channels": [
+    "MBC 1",
+    "MBC 2",
+    "MBC 3",
+    "MBC 4",
+    "MBC 5",
+    "MBC Drama",
+    "MBC Drama Plus",
+    "MBC Action",
+    "MBC Max",
+    "MBC Masr",
+    "MBC Masr 2",
+    "MBC Iraq",
+    "MBC Variety",
+    "MBC Persia",
+    "MBC Bollywood",
+    "MBC Life",
+    "MBC Masr Drama"
+  ]
+}
